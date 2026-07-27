@@ -1,8 +1,6 @@
 """
 CryptoMADSS - Streamlit Dashboard
-FR-8.1: Display current price data and technical indicator charts
-FR-8.2: Display the latest recommendation from Coordinator Agent
-FR-8.3: Display backtest performance metrics and equity curve
+Multi-Agent Distributed System for Cryptocurrency Trading Signal Generation
 """
 
 import streamlit as st
@@ -14,274 +12,345 @@ import sys
 import os
 from datetime import datetime
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ============================================
+# PATH SETUP
+# ============================================
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+sys.path.insert(0, current_dir)
 
-from agents.coordinator_agent import CoordinatorAgent
-from agents.market_data_agent import MarketDataAgent
-from backtesting.backtest_engine import BacktestEngine
-
-# Page configuration
+# ============================================
+# PAGE CONFIG
+# ============================================
 st.set_page_config(
-    page_title="CryptoMADSS Dashboard",
+    page_title="CryptoMADSS - Trading Signals",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Title
-st.title("🚀 CryptoMADSS - Multi-Agent Trading Signal Dashboard")
+# ============================================
+# LOAD AGENTS
+# ============================================
+@st.cache_resource
+def load_market_agent():
+    """Load market agent with error handling"""
+    try:
+        from agents.market_data_agent import MarketDataAgent
+        agent = MarketDataAgent()
+        return agent
+    except Exception as e:
+        st.error(f"❌ Market Agent Error: {e}")
+        return None
+
+@st.cache_resource
+def load_coordinator():
+    """Load coordinator with error handling"""
+    try:
+        from agents.coordinator_agent import CoordinatorAgent
+        coordinator = CoordinatorAgent(
+            account_balance=10000,
+            risk_per_trade_pct=1.0,
+            stop_loss_pct=2.0
+        )
+        return coordinator
+    except Exception as e:
+        st.error(f"❌ Coordinator Error: {e}")
+        return None
+
+# ============================================
+# MAIN APP
+# ============================================
+
+st.title("🚀 CryptoMADSS - Multi-Agent Trading Dashboard")
 st.markdown("*Multi-Agent Distributed System for Cryptocurrency Trading Signal Generation*")
 
-# Sidebar
+# Load agents
+market_agent = load_market_agent()
+coordinator = load_coordinator()
+
+if market_agent is None:
+    st.warning("⚠️ Market Agent not available. Using fallback data.")
+    # Create dummy data for demonstration
+    dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
+    dummy_data = pd.DataFrame({
+        'open': np.random.randn(100) * 100 + 65000,
+        'high': np.random.randn(100) * 100 + 65100,
+        'low': np.random.randn(100) * 100 + 64900,
+        'close': np.random.randn(100) * 100 + 65000,
+        'volume': np.random.randn(100) * 1000 + 5000
+    }, index=dates)
+    dummy_data['close'] = dummy_data['close'].cumsum() + 65000
+    data = dummy_data
+    st.warning("⚠️ Using dummy data (Binance API unavailable)")
+else:
+    try:
+        # Fetch real data
+        with st.spinner("Fetching market data..."):
+            data = market_agent.get_historical_data("BTCUSDT", "1h", "30 days ago UTC")
+            
+            # Check if data is empty
+            if data is None or len(data) == 0:
+                st.warning("⚠️ No data received from Binance. Using dummy data.")
+                dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
+                dummy_data = pd.DataFrame({
+                    'open': np.random.randn(100) * 100 + 65000,
+                    'high': np.random.randn(100) * 100 + 65100,
+                    'low': np.random.randn(100) * 100 + 64900,
+                    'close': np.random.randn(100) * 100 + 65000,
+                    'volume': np.random.randn(100) * 1000 + 5000
+                }, index=dates)
+                dummy_data['close'] = dummy_data['close'].cumsum() + 65000
+                data = dummy_data
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {e}")
+        st.warning("⚠️ Using dummy data for demonstration.")
+        dates = pd.date_range(end=datetime.now(), periods=100, freq='1H')
+        dummy_data = pd.DataFrame({
+            'open': np.random.randn(100) * 100 + 65000,
+            'high': np.random.randn(100) * 100 + 65100,
+            'low': np.random.randn(100) * 100 + 64900,
+            'close': np.random.randn(100) * 100 + 65000,
+            'volume': np.random.randn(100) * 1000 + 5000
+        }, index=dates)
+        dummy_data['close'] = dummy_data['close'].cumsum() + 65000
+        data = dummy_data
+
+# ============================================
+# SIDEBAR
+# ============================================
 st.sidebar.header("⚙️ Configuration")
 
 # Symbol selection
 symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
-selected_symbol = st.sidebar.selectbox("Select Trading Pair", symbols)
+selected_symbol = st.sidebar.selectbox("Trading Pair", symbols, index=0)
 
 # Time interval
-intervals = ["1h", "4h", "1d", "1m", "5m"]
-selected_interval = st.sidebar.selectbox("Time Interval", intervals)
-
-# Lookback period
-lookback = st.sidebar.selectbox(
-    "Lookback Period",
-    ["7 days ago UTC", "14 days ago UTC", "30 days ago UTC", "90 days ago UTC"]
-)
+intervals = ["1h", "4h", "1d"]
+selected_interval = st.sidebar.selectbox("Time Interval", intervals, index=0)
 
 # Account settings
 st.sidebar.header("💰 Account Settings")
-account_balance = st.sidebar.number_input("Account Balance ($)", value=10000, step=1000)
+account_balance = st.sidebar.number_input("Balance ($)", value=10000, step=1000, min_value=1000)
 risk_per_trade = st.sidebar.slider("Risk per Trade (%)", 0.5, 5.0, 1.0, 0.5)
 
-# Buttons
-refresh = st.sidebar.button("🔄 Refresh Signal")
-run_backtest = st.sidebar.button("📊 Run Backtest")
+# Signal button
+generate_signal = st.sidebar.button("🔄 Generate Signal", type="primary", use_container_width=True)
 
-# Initialize agents
-@st.cache_resource
-def get_agents():
-    return CoordinatorAgent(
-        account_balance=account_balance,
-        risk_per_trade_pct=risk_per_trade
-    )
+# ============================================
+# MAIN CONTENT
+# ============================================
 
-@st.cache_resource
-def get_market_agent():
-    return MarketDataAgent()
-
-# Main content
-col1, col2, col3 = st.columns(3)
-
-# Fetch data
-market_agent = get_market_agent()
-coordinator = get_agents()
+# Initialize session state
+if 'signal' not in st.session_state:
+    st.session_state['signal'] = None
 
 try:
-    # Get historical data
-    data = market_agent.get_historical_data(selected_symbol, selected_interval, "90 days ago UTC")
-    current_price = data['close'].iloc[-1]
-    price_change = ((data['close'].iloc[-1] - data['close'].iloc[-2]) / data['close'].iloc[-2]) * 100
+    # Check if data has values
+    if len(data) > 0:
+        current_price = data['close'].iloc[-1]
+        prev_price = data['close'].iloc[-2] if len(data) > 1 else current_price
+        price_change = ((current_price - prev_price) / prev_price) * 100 if prev_price != 0 else 0
+    else:
+        current_price = 65000
+        price_change = 0
+        st.warning("⚠️ No price data available")
 
-    # Display current price
+    # Display metrics
+    col1, col2, col3 = st.columns(3)
+
     with col1:
         st.metric(
-            label=f"💰 {selected_symbol} Price",
+            label=f"💰 {selected_symbol}",
             value=f"${current_price:,.2f}",
             delta=f"{price_change:.2f}%"
         )
 
     # Generate signal
-    if refresh:
-        with st.spinner("Generating signal..."):
-            result = coordinator.generate_signal(selected_symbol, selected_interval, lookback)
-            st.session_state['signal'] = result
+    if generate_signal and coordinator:
+        with st.spinner("🧠 Analyzing with AI agents..."):
+            try:
+                result = coordinator.generate_signal(selected_symbol, selected_interval, "7 days ago UTC")
+                st.session_state['signal'] = result
+                st.success("✅ Signal generated!")
+            except Exception as e:
+                st.error(f"Error generating signal: {e}")
+                st.session_state['signal'] = None
 
-    # Display signal if available
-    if 'signal' in st.session_state:
+    # Display signal
+    if st.session_state['signal']:
         signal = st.session_state['signal']
         
         with col2:
             decision = signal.get('final_decision', 'HOLD')
             confidence = signal.get('confidence', 0)
             
-            # Color coding
             if decision == "BUY":
-                color = "green"
                 emoji = "📈"
             elif decision == "SELL":
-                color = "red"
                 emoji = "📉"
             else:
-                color = "orange"
                 emoji = "➖"
             
             st.metric(
                 label=f"{emoji} Signal",
                 value=decision,
-                delta=f"Confidence: {confidence:.1f}%",
-                delta_color="normal" if decision != "SELL" else "inverse"
+                delta=f"Confidence: {confidence:.1f}%"
             )
         
         with col3:
             position_size = signal.get('position_size', 0)
             stop_loss = signal.get('stop_loss_price', 0)
             
-            if decision in ["BUY", "SELL"]:
+            if decision in ["BUY", "SELL"] and position_size > 0:
                 st.metric(
-                    label="📊 Position Size",
-                    value=f"{position_size:.6f} units",
+                    label="📊 Position",
+                    value=f"{position_size:.4f} units",
                     delta=f"SL: ${stop_loss:,.2f}"
                 )
             else:
                 st.metric(
                     label="📊 Status",
                     value="No Position",
-                    delta="Waiting for signal"
+                    delta="Waiting"
                 )
 
-    # Candlestick chart
-    st.subheader(f"📈 {selected_symbol} Price Chart")
-    
-    # Create candlestick chart
-    fig = make_subplots(
-        rows=3, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=("Price", "Volume", "RSI")
-    )
-    
-    # Candlestick
-    fig.add_trace(
-        go.Candlestick(
-            x=data.index,
-            open=data['open'],
-            high=data['high'],
-            low=data['low'],
-            close=data['close'],
-            name="Price"
-        ),
-        row=1, col=1
-    )
-    
-    # Add moving averages
-    sma_20 = data['close'].rolling(window=20).mean()
-    sma_50 = data['close'].rolling(window=50).mean()
-    
-    fig.add_trace(
-        go.Scatter(x=data.index, y=sma_20, name="SMA 20", line=dict(color='orange', width=1)),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=data.index, y=sma_50, name="SMA 50", line=dict(color='blue', width=1)),
-        row=1, col=1
-    )
-    
-    # Volume
-    colors = ['green' if data['close'].iloc[i] >= data['open'].iloc[i] else 'red' 
-              for i in range(len(data))]
-    fig.add_trace(
-        go.Bar(x=data.index, y=data['volume'], name="Volume", marker_color=colors),
-        row=2, col=1
-    )
-    
-    # RSI
-    delta = data['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    fig.add_trace(
-        go.Scatter(x=data.index, y=rsi, name="RSI", line=dict(color='purple')),
-        row=3, col=1
-    )
-    fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-    fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
-    
-    # Update layout
-    fig.update_layout(
-        height=800,
-        template="plotly_dark",
-        xaxis_rangeslider_visible=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    # ============================================
+    # CHART
+    # ============================================
+    if len(data) > 0:
+        st.subheader(f"📈 {selected_symbol} - Price Chart")
 
-    # Backtest Results
-    if run_backtest:
-        with st.spinner("Running backtest... This may take a moment."):
-            engine = BacktestEngine(
-                initial_balance=account_balance,
-                risk_per_trade_pct=risk_per_trade
-            )
-            metrics = engine.run_backtest(selected_symbol, selected_interval, lookback)
-            st.session_state['backtest_metrics'] = metrics
-    
-    if 'backtest_metrics' in st.session_state:
-        metrics = st.session_state['backtest_metrics']
-        
-        st.subheader("📊 Backtest Results")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Trades", metrics.get('total_trades', 0))
-            st.metric("Win Rate", f"{metrics.get('win_rate', 0):.1f}%")
-        
-        with col2:
-            st.metric("Total Return", f"{metrics.get('total_return', 0):.2f}%")
-            st.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
-        
-        with col3:
-            st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.2f}%")
-            st.metric("Avg Trade", f"${metrics.get('avg_trade', 0):.2f}")
-        
-        with col4:
-            st.metric("Final Balance", f"${metrics.get('final_balance', 0):,.2f}")
-            st.metric("Winning Trades", metrics.get('winning_trades', 0))
+        # Use last 300 candles or all if less
+        chart_data = data if len(data) <= 300 else data.iloc[-300:]
 
-    # Decision Log
-    st.subheader("📝 Decision Log")
-    
-    log = coordinator.get_decision_log()
-    if log:
-        log_df = pd.DataFrame(log)
-        st.dataframe(log_df, use_container_width=True)
-        
-        # Download button
-        csv = log_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Decision Log",
-            data=csv,
-            file_name=f"decision_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("Price", "Volume", "RSI")
         )
-    else:
-        st.info("No decisions logged yet. Click 'Refresh Signal' to generate signals.")
 
-    # Agent Status
+        # Candlestick
+        fig.add_trace(
+            go.Candlestick(
+                x=chart_data.index,
+                open=chart_data['open'],
+                high=chart_data['high'],
+                low=chart_data['low'],
+                close=chart_data['close'],
+                name="Price",
+                increasing_line_color='green',
+                decreasing_line_color='red'
+            ),
+            row=1, col=1
+        )
+
+        # Moving averages (only if enough data)
+        if len(chart_data) >= 20:
+            sma_20 = chart_data['close'].rolling(window=20).mean()
+            fig.add_trace(
+                go.Scatter(x=chart_data.index, y=sma_20, 
+                           name="SMA 20", line=dict(color='orange', width=1.5)),
+                row=1, col=1
+            )
+
+        if len(chart_data) >= 50:
+            sma_50 = chart_data['close'].rolling(window=50).mean()
+            fig.add_trace(
+                go.Scatter(x=chart_data.index, y=sma_50, 
+                           name="SMA 50", line=dict(color='blue', width=1.5)),
+                row=1, col=1
+            )
+
+        # Volume
+        colors = ['green' if chart_data['close'].iloc[i] >= chart_data['open'].iloc[i] else 'red' 
+                  for i in range(len(chart_data))]
+        fig.add_trace(
+            go.Bar(x=chart_data.index, y=chart_data['volume'], 
+                   name="Volume", marker_color=colors),
+            row=2, col=1
+        )
+
+        # RSI (only if enough data)
+        if len(chart_data) >= 14:
+            delta = chart_data['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+
+            fig.add_trace(
+                go.Scatter(x=chart_data.index, y=rsi, 
+                           name="RSI", line=dict(color='purple', width=2)),
+                row=3, col=1
+            )
+            fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+
+        fig.update_layout(
+            height=700,
+            template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            showlegend=True
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ============================================
+    # DECISION LOG
+    # ============================================
+    if coordinator:
+        st.subheader("📝 Decision Log")
+        
+        log = coordinator.get_decision_log()
+        if log:
+            log_df = pd.DataFrame(log)
+            st.dataframe(log_df, use_container_width=True)
+            
+            csv = log_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Log (CSV)",
+                data=csv,
+                file_name=f"decision_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("ℹ️ No decisions logged. Click 'Generate Signal'.")
+
+    # ============================================
+    # AGENT STATUS
+    # ============================================
     st.subheader("🤖 Agent Status")
-    col1, col2, col3, col4 = st.columns(4)
+    cols = st.columns(4)
     
-    with col1:
-        st.success("✅ Market Data Agent")
-    with col2:
-        st.success("✅ Technical Analysis Agent")
-    with col3:
-        st.success("✅ Prediction Agent (LSTM)")
-    with col4:
+    with cols[0]:
+        if market_agent:
+            st.success("✅ Market Data Agent")
+        else:
+            st.warning("⚠️ Market Agent (Fallback Mode)")
+    
+    with cols[1]:
+        st.success("✅ Technical Agent")
+    
+    with cols[2]:
+        if coordinator:
+            st.success("✅ Coordinator Agent")
+        else:
+            st.error("❌ Coordinator Agent")
+    
+    with cols[3]:
         st.success("✅ Risk Agent")
-    
-    st.caption("All agents are operational")
 
 except Exception as e:
     st.error(f"Error: {e}")
-    st.info("Please make sure you have internet connection and Binance API is accessible.")
+    st.info("Please check your internet connection and try again.")
 
-# Footer
+# ============================================
+# FOOTER
+# ============================================
 st.markdown("---")
-st.caption(f"CryptoMADSS v1.0 | Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-st.caption("⚠️ This is for academic/paper trading purposes only. Not financial advice.")
+st.caption(f"CryptoMADSS v1.0 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.caption("⚠️ Academic/Paper Trading Only | Not Financial Advice")
